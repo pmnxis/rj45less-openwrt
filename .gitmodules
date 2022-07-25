@@ -1,0 +1,5 @@
+[submodule "openwrt"]
+	path = openwrt
+	url = https://github.com/openwrt/openwrt.git
+	# tags v19.07.10
+	branch = d03dc49943db1d02ff89e056a18eefe5e2d51dec

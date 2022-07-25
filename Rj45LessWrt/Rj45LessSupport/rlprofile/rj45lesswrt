@@ -1,0 +1,221 @@
+#!/bin/sh
+
+calcSha256 ()
+{
+	local sha256temp=$(eval "echo -n '"$1"' | sha256sum | head -c 64")
+	echo ${sha256temp}
+}
+
+getHwRandom() 
+{
+	local temp=$(eval "echo $(tr -cd 0-9 </dev/urandom | head -c 6)")
+	local temp_emergancy=$(eval "echo $(tr -cd 0-9 </dev/urandom | head -c 5)")
+	local prefix="$(eval "echo -n '"$temp"' | head -c 1")"
+	if [ "$prefix" = "0" ]; then
+		echo "1$temp_emergancy"
+	elif [ "$prefix" = "9" ]; then
+		echo "1$temp_emergancy"
+	else
+		echo "${temp}"
+	fi
+}
+
+getFromServerGen()
+{
+	# TODO! : Get address from some configuration.
+	local data="$(eval "curl -s https://localhost/somerequest")"
+	if [ -z ${data+x} ]; then
+		echo "FD"
+	elif [ ${#data} = 6 ]; then
+		if [ "$data" -eq "$data" ] 2>/dev/null; then
+			echo "$(printf "%06d" $data)"
+		else
+			echo "FE";
+		fi
+	else
+		echo "FF"
+	fi
+}
+
+getRandom()
+{
+	r1=$(getFromServerGen)
+	r2=$(getHwRandom)
+	if [ ${#r1} = 6  ]; then
+		echo "${r1}"
+	else
+		echo "${r2}"
+	fi
+}
+
+getProfile()
+{
+	local data="$(eval "rlprofile -c")"
+	if [ -z ${data+x} ]; then
+		echo "FB"
+	elif [ ${#data} = 9 ]; then
+		local temp=$(eval "echo '"$data"' | head -c 2")
+		if [ "$temp" = "OK" ]; then
+			local mid=$(eval "echo '"$data"' | tr -cd 0-9")
+			if [ "$mid" -eq "$mid" ] 2>/dev/null; then
+				if [ "$mid" -ge 100000 ] && [ "$mid" -le 899999 ]; then
+					echo "$(printf "%06d" $mid)"
+				else
+					echo "FC"
+				fi
+			else
+				echo "FE"
+			fi
+		else
+			echo "FE"
+		fi
+	else
+		echo "FF"
+	fi
+}
+
+writeProfile()
+{
+	local temp="$(eval "rlprofile -w '"$1"'")"
+}
+
+eraseProfile()
+{
+	local temp="$(eval "rlprofile -e")"
+}
+
+checkFindStr()
+{
+	if [ `echo $1 | grep -c "$2" ` -gt 0 ]; then
+		echo "YES"
+	else
+		echo "NO"
+	fi
+}
+
+getApPass()
+{
+	# TODO! : apPwPrefixStr and apPwPostfixStr should be get from the configuration.
+	# KEEP! : Recommend len(apPwPrefixStr) + len(apPwPostfixStr) + 6 < 64
+	local apPwPrefixStr="Rj45Less-"
+	local apPwPostfixStr="09azAZHeyyPleaseFillHereWithRandom09azAZ"
+	local pwTestMid="$1"
+
+	shaResult=$(calcSha256 "$apPwPrefixStr$pwTestMid$apPwPostfixStr")
+	mabase62Result=$(mabase62 "$shaResult")
+
+	echo "$mabase62Result"
+}
+
+getRootPass()
+{
+	# TODO! : rootPwPrefixStr and rootPwPostfixStr should be get from the configuration.
+	# KEEP! : Recommend len(rootPwPrefixStr) + len(rootPwPostfixStr) + 6 < 64
+	local rootPwPrefixStr="Rj45Less-"
+	local rootPwPostfixStr="AhoyAhoyAhoyAhoyPekoraPekora"
+	local pwTestMid="$1"
+
+	shaResult=$(calcSha256 "$rootPwPrefixStr$pwTestMid$rootPwPostfixStr")
+	mabase62Result=$(mabase62 "$shaResult")
+
+	echo "$mabase62Result"
+}
+
+writeRadio()
+{	
+	local ppreifx="wireless.radio0"
+	local check="$(eval "uci show $ppreifx.$1")"
+	local result=$(checkFindStr "$check" "$2")
+	if [ "$result" = "NO" ]; then
+		"$(eval "uci set $ppreifx.$1='$2'")"
+		echo 1
+	else
+		echo 0
+	fi
+}
+
+writeWifi()
+{	
+	local ppreifx="wireless.@wifi-iface[0]"
+	local check="$(eval "uci show $ppreifx.$1")"
+	local result=$(checkFindStr "$check" "$2")
+	if [ "$result" = "NO" ]; then
+		local temp="$(eval "uci set $ppreifx.$1='$2'")"
+		echo 1
+	else
+		echo 0
+	fi
+}
+
+checkAndWriteUciConfig()
+{
+	local akey=$(getApPass "$1")
+	local __cwuciRet=0
+
+	__cwuciRet="$(($__cwuciRet+$(writeRadio "disabled" "0")))"
+	__cwuciRet="$(($__cwuciRet+$(writeRadio "country" "KR")))"
+
+	__cwuciRet="$(($__cwuciRet+$(writeWifi "ssid" "Rj45Less-$1")))"
+	__cwuciRet="$(($__cwuciRet+$(writeWifi "mode" "ap")))"
+	__cwuciRet="$(($__cwuciRet+$(writeWifi "encryption" "psk2")))"
+	__cwuciRet="$(($__cwuciRet+$(writeWifi "key" "$akey")))"
+
+	echo $__cwuciRet
+}
+
+turnWifiOffAndOn()
+{
+	uci set wireless.radio0.disabled=0
+	wifi down
+	sleep 1
+	wifi up
+}
+
+applyNewRootPass()
+{
+	local rkey=$(getRootPass $1)
+	(
+		echo "$rkey"
+		sleep 1
+		echo "$rkey"
+	)|passwd root > /dev/null 2>&1
+}
+
+checkAndWriteOnBoot()
+{
+	local mid=$(getProfile)
+	local temp=""
+	if [ ${#mid} != 6 ]; then
+		mid=$(getRandom)
+		temp=$(writeProfile "$mid")
+	fi
+
+	local uciret=$(checkAndWriteUciConfig "$mid")
+	if [ "$uciret" != 0 ]; then
+		temp=$(applyNewRootPass "$mid")
+		temp=$(turnWifiOffAndOn)
+	fi
+
+	return "$mid"
+}
+
+ForceReset()
+{
+	local mid=$(getRandom)
+	local temp=$(writeProfile "$mid")
+
+	temp=$(checkAndWriteUciConfig "$mid")
+	temp=$(applyNewRootPass "$mid")
+	
+	temp=$(turnWifiOffAndOn)
+
+	echo "$mid"
+}
+
+if [ "$1" = "--ForceReset" ]; then
+	___ttr = $(ForceReset)
+elif [ "$1" = "--OnBootOp" ]; then
+	___ttr = $(checkAndWriteOnBoot)
+else
+	echo "Unknown"
+fi

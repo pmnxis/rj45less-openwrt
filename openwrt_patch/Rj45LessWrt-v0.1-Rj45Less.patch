@@ -1,0 +1,293 @@
+diff --git a/package/base-files/files/etc/init.d/boot b/package/base-files/files/etc/init.d/boot
+index 09b7f44c79..9ed5565cdd 100755
+--- a/package/base-files/files/etc/init.d/boot
++++ b/package/base-files/files/etc/init.d/boot
+@@ -48,4 +48,7 @@ boot() {
+ 	
+ 	# temporary hack until configd exists
+ 	/sbin/reload_config
++
++	# Rj45Less-Wrt Custom Boot Routine
++	/usr/bin/rj45lesswrt --OnBootOp
+ }
+diff --git a/package/base-files/files/etc/rc.button/reset b/package/base-files/files/etc/rc.button/reset
+index 2403122ad2..4e6bf5e92f 100755
+--- a/package/base-files/files/etc/rc.button/reset
++++ b/package/base-files/files/etc/rc.button/reset
+@@ -7,7 +7,6 @@ OVERLAY="$( grep ' /overlay ' /proc/mounts )"
+ case "$ACTION" in
+ pressed)
+ 	[ -z "$OVERLAY" ] && return 0
+-
+ 	return 5
+ ;;`
+ timeout)
+@@ -22,7 +21,11 @@ released)
+ 		reboot
+ 	elif [ "$SEEN" -ge 5 -a -n "$OVERLAY" ]
+ 	then
++		echo timer > /sys/class/leds/extn3\:blue\:wlan_sig2/trigger
+ 		echo "FACTORY RESET" > /dev/console
++		# reset rlprofile rom.
++		rlprofile -e
++		# reset jffs
+ 		jffs2reset -y && reboot &
+ 	fi
+ ;;
+diff --git a/target/linux/ramips/base-files/etc/board.d/02_network b/target/linux/ramips/base-files/etc/board.d/02_network
+index 8ca1831afe..fe7f338f11 100755
+--- a/target/linux/ramips/base-files/etc/board.d/02_network
++++ b/target/linux/ramips/base-files/etc/board.d/02_network
+@@ -269,6 +269,10 @@ ramips_setup_interfaces()
+ 		ucidef_add_switch "switch0" \
+ 			"1:lan:3" "2:lan:4" "3:lan:1" "4:lan:2" "0:wan" "6@eth0"
+ 		;;
++	iptime,extn3)
++		ucidef_add_switch "switch0" \
++			"2:lan:2" "3:lan:1" "0:wan" "6@eth0"
++		;;
+ 	dir-860l-b1|\
+ 	elecom,wrc-1167ghbk2-s|\
+ 	elecom,wrc-2533gst|\
+diff --git a/target/linux/ramips/dts/IPTIME-EXTN3.dts b/target/linux/ramips/dts/IPTIME-EXTN3.dts
+new file mode 100644
+index 0000000000..e00f9549c0
+--- /dev/null
++++ b/target/linux/ramips/dts/IPTIME-EXTN3.dts
+@@ -0,0 +1,139 @@
++/dts-v1/;
++
++#include "mt7628an.dtsi"
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
++
++/ {
++	compatible = "iptime,extn3", "mediatek,mt7628an-soc";
++	model = "ipTIME EXTN3";
++
++	chosen {
++		bootargs = "console=ttyS0,57600n8";
++	};
++
++	aliases {
++		led-boot = &led_system;
++		led-failsafe = &led_system;
++		led-running = &led_system;
++		led-upgrade = &led_system;
++	};
++
++	memory@0 {
++		device_type = "memory";
++		reg = <0x0 0x4000000>;
++	};
++
++	leds {
++		compatible = "gpio-leds";
++
++		led_system: system {
++			label = "extn3:blue:wlan_sig1";
++			gpios = <&gpio1 9 GPIO_ACTIVE_LOW>;
++		};
++
++		wlan2g {
++			label = "extn3:blue:wlan_sig2";
++			gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
++		};
++	};
++	
++	keys {
++		compatible = "gpio-keys-polled";
++		poll-interval = <60>;
++
++		reset {
++			label = "reset";
++			gpios = <&gpio1 45 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_RESTART>;
++		};
++
++		BTN_9 {
++			label = "BTN_9";
++			gpios = <&gpio1 38 GPIO_ACTIVE_LOW>;
++			linux,code = <BTN_9>;
++		};
++	};
++};
++
++&pinctrl {
++		state_default: pinctrl0 {
++		gpio {
++			ralink,group = "i2c", "uart1", "wdt";
++			ralink,function = "gpio";
++		};
++	};
++};
++
++&esw {
++	mediatek,portmap = <0x3e>;
++	mediatek,portdisable = <0x32>;
++};
++
++&spi0 {
++	status = "okay";
++
++	flash@0 {
++		compatible = "jedec,spi-nor";
++		reg = <0>;
++		spi-max-frequency = <10000000>;
++
++		partitions {
++			compatible = "fixed-partitions";
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			uboot: partition@0 {
++				label = "u-boot";
++				reg = <0x0 0x20000>;
++				read-only;
++			};
++
++			partition@20000 {
++				label = "config";
++				reg = <0x20000 0x10000>;
++				// Default : read-only;
++				// But this application use writing for
++				// saving rj45less parameters.	
++			};
++
++			factory: partition@30000 {
++				label = "factory";
++				reg = <0x30000 0x10000>;
++				read-only;
++			};
++
++			partition@40000 {
++				compatible = "denx,uimage";
++				label = "firmware";
++				reg = <0x40000 0x3c0000>;
++			};
++		};
++	};
++};
++
++&ethernet {
++	mtd-mac-address = <&uboot 0x1fc20>;
++	nvmem-cell-names = "mac-address";
++};
++
++&ehci {
++	status = "disabled";
++};
++
++&ohci {
++	status = "disabled";
++};
++
++&pcie {
++	status = "disabled";
++};
++
++&pcie0 {
++	status = "disabled";
++};
++
++&wmac {
++	status = "okay";
++};
+\ No newline at end of file
+diff --git a/target/linux/ramips/image/mt76x8.mk b/target/linux/ramips/image/mt76x8.mk
+index d0c66a0e23..75a76bb9ca 100644
+--- a/target/linux/ramips/image/mt76x8.mk
++++ b/target/linux/ramips/image/mt76x8.mk
+@@ -93,6 +93,17 @@ define Device/hiwifi_hc5861b
+ endef
+ TARGET_DEVICES += hiwifi_hc5861b
+ 
++define Device/iptime_extn3
++  DTS := IPTIME-EXTN3
++  IMAGE_SIZE := 3840k
++  UIMAGE_NAME := extn3
++  DEVICE_TITLE := ipTIME EXTN3
++  DEVICE_PACKAGES := kmod-mt76x2 curl -ppp -ppp-mod-pppoe -ip6tables -odhcp6c \
++  -kmod-ipv6 -kmod-ip6tables -odhcpd-ipv6only -kmod-usb-core -kmod-usb-ehci \
++  -kmod-usb-ledtrig-usbport -kmod-usb-ohci -kmod-usb2 -debugfs -opkg 
++endef
++TARGET_DEVICES += iptime_extn3
++
+ define Device/LinkIt7688
+   DTS := LINKIT7688
+   IMAGE_SIZE := $(ralink_default_fw_size_32M)
+diff --git a/target/linux/ramips/mt76x8/config-4.14 b/target/linux/ramips/mt76x8/config-4.14
+index 00de576855..4b3d082dc7 100644
+--- a/target/linux/ramips/mt76x8/config-4.14
++++ b/target/linux/ramips/mt76x8/config-4.14
+@@ -119,6 +119,7 @@ CONFIG_HAVE_PERF_EVENTS=y
+ CONFIG_HAVE_REGS_AND_STACK_ACCESS_API=y
+ CONFIG_HAVE_SYSCALL_TRACEPOINTS=y
+ CONFIG_HAVE_VIRT_CPU_ACCOUNTING_GEN=y
++CONFIG_HWSPINLOCK=m
+ CONFIG_HW_HAS_PCI=y
+ CONFIG_HZ_PERIODIC=y
+ CONFIG_ICPLUS_PHY=y
+@@ -157,6 +158,10 @@ CONFIG_MTD_CMDLINE_PARTS=y
+ CONFIG_MTD_M25P80=y
+ CONFIG_MTD_PHYSMAP=y
+ CONFIG_MTD_SPI_NOR=y
++CONFIG_MTD_SPLIT_FIRMWARE=y
++CONFIG_MTD_SPLIT_FIT_FW=y
++CONFIG_MTD_SPLIT_LZMA_FW=y
++CONFIG_MTD_SPLIT_SEAMA_FW=y
+ CONFIG_MTD_SPLIT_TPLINK_FW=y
+ CONFIG_MTD_SPLIT_TRX_FW=y
+ CONFIG_MTD_SPLIT_UIMAGE_FW=y
+@@ -169,6 +174,7 @@ CONFIG_NET_MEDIATEK_SOC=y
+ CONFIG_NET_VENDOR_MEDIATEK=y
+ CONFIG_NO_GENERIC_PCI_IOPORT_MAP=y
+ # CONFIG_NO_IOPORT_MAP is not set
++CONFIG_NVMEM=m
+ CONFIG_OF=y
+ CONFIG_OF_ADDRESS=y
+ CONFIG_OF_ADDRESS_PCI=y
+@@ -201,16 +207,14 @@ CONFIG_REGULATOR_FIXED_VOLTAGE=y
+ CONFIG_RESET_CONTROLLER=y
+ # CONFIG_SCHED_INFO is not set
+ # CONFIG_SCSI_DMA is not set
+-# CONFIG_SERIAL_8250_FSL is not set
+-CONFIG_SERIAL_8250_NR_UARTS=3
+-CONFIG_SERIAL_8250_RUNTIME_UARTS=3
+-CONFIG_SERIAL_OF_PLATFORM=y
++# CONFIG_SERIAL_8250 is not set
+ CONFIG_SOC_MT7620=y
+ # CONFIG_SOC_MT7621 is not set
+ # CONFIG_SOC_RT288X is not set
+ # CONFIG_SOC_RT305X is not set
+ # CONFIG_SOC_RT3883 is not set
+ CONFIG_SPI=y
++# CONFIG_SPI_DYNAMIC is not set
+ CONFIG_SPI_MASTER=y
+ CONFIG_SPI_MT7621=y
+ # CONFIG_SPI_RT2880 is not set
+@@ -230,6 +234,5 @@ CONFIG_TICK_CPU_ACCOUNTING=y
+ CONFIG_TIMER_OF=y
+ CONFIG_TIMER_PROBE=y
+ CONFIG_TINY_SRCU=y
+-CONFIG_USB_SUPPORT=y
+ CONFIG_USE_OF=y
+ CONFIG_WATCHDOG_CORE=y
+diff --git a/target/linux/ramips/patches-4.14/305-spi-nor-add-for-xmc25qh32-and-xmc25qh32a.patch b/target/linux/ramips/patches-4.14/305-spi-nor-add-for-xmc25qh32-and-xmc25qh32a.patch
+new file mode 100644
+index 0000000000..d2c1e8f322
+--- /dev/null
++++ b/target/linux/ramips/patches-4.14/305-spi-nor-add-for-xmc25qh32-and-xmc25qh32a.patch
+@@ -0,0 +1,11 @@
++--- a/drivers/mtd/spi-nor/spi-nor.c
+++++ b/drivers/mtd/spi-nor/spi-nor.c
++@@ -1278,6 +1278,8 @@ static const struct flash_info spi_nor_ids[] = {
++ 	{ "3S1400AN", S3AN_INFO(0x1f2600, 512, 528) },
++ 
++ 	/* XMC (Wuhan Xinxin Semiconductor Manufacturing Corp.) */
+++	{ "XM25QH32", INFO(0x204016, 0, 32 * 1024, 64, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+++	{ "XM25QH32A", INFO(0x207016, 0, 32 * 1024, 64, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
++ 	{ "XM25QH64A", INFO(0x207017, 0, 64 * 1024, 128, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
++ 	{ "XM25QH128A", INFO(0x207018, 0, 64 * 1024, 256, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
++ 	{ },
