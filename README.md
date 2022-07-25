@@ -26,3 +26,7 @@ chmod +x ./setup.sh
 When you try to upload a firmware from Stock ipTIME AP. Please upload `*-initramfs-kernel.bin`.
 
 Or for upgrade from `TFTP Bootloader` or `working openwrt`, Please use `*-squashfs-sysupgrade.bin`.
+
+## Licnese
+Jinwoo Park (pmnxis@gmail.com)
+Rj45LessWrt is under the GPL v3
